@@ -6,9 +6,9 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import pandas as pd
 import html2text
+from pathlib import Path
 
 # --- CONFIGURATION ---
-FILE_PATH = "/mnt/production/Maintenance schedule.ods"
 EMAIL_SENDER = "your_alerts_email@gmail.com"
 EMAIL_PASSWORD = "your_app_password"  # Use an App Password, not your regular password
 EMAIL_RECEIVER = "roaster_operator@example.com"
@@ -25,46 +25,46 @@ def test_output_to_terminal(due_tasks):
     text_maker.ignore_links = True
     print(text_maker.handle(html_body))
 
-# --- Read config data ---
-def get_filename():
-    # Read filename from config file
+# --- Config file class ---
+class CfgReader(dict):
+
     CFG_FILE = '~/.da_config'
     SECTION = 'MAINTENANCE ALERTS'
-    OPTION = 'maint_logfile'
-    global __config
-    __config = configparser.ConfigParser()
-    fc = __config.read([os.path.expanduser(CFG_FILE)])
-    if not fc:
-        print(f'Config file not found {CFG_FILE}')
-        return None
-    
-    # Section exists?
-    if not __config.has_section(SECTION):
-        print (f'Section [{SECTION}] missing from config file {CFG_FILE}')
-        return None
-    
-    # Option exists?
-    fname = __config.get(SECTION, OPTION,fallback=None)
-    if not fname:
-        print (f'Option {OPTION} missing from config file {CFG_FILE}')
-        return None
+    OPTION_FNAME = 'filename'
+    OPTION_SENDER = 'sender'
+    OPTION_RECEIVER = 'receiver'
 
-    # File exists?
-    if not os.path.exists(fname):
-        print(f"Error: File not found at {fname}")
-        return None
-    
-    return fname
+    def __init__(self):
 
+        self.config = configparser.ConfigParser()
+        
+        # Read filename from config file
+        path = Path(self.CFG_FILE).expanduser()
+        if not path.exists():
+            raise FileNotFoundError(f'Config file not found {self.CFG_FILE}')
+        self.config.read([os.path.expanduser(self.CFG_FILE)])
+        
+        # Section exists?
+        if not self.config.has_section(self.SECTION):
+            raise ValueError (f'Section [{self.SECTION}] missing from config file {self.CFG_FILE}')
+        
+        # Get maintenance file name
+        self[self.OPTION_FNAME] = self.config.get(self.SECTION, self.OPTION_FNAME, fallback=None)
+        if not self[self.OPTION_FNAME]:
+            raise ValueError (f"{self.OPTION_FNAME} keyword missing from {self.SECTION} section of config file {self.CFG_FILE}'")
+        
+        if not os.path.exists(self[self.OPTION_FNAME]):
+            raise FileNotFoundError(f'Roaster maintenance schedule file {self[self.OPTION_FNAME]} not found')
+        
+    def get_fname(self) -> str:
+        return self[self.OPTION_FNAME]
+        
 # --- 1. PARSE SPREADSHEET ---
 
-def check_maintenance():
+def check_maintenance(maintfile: str):
 
-    file_path = get_filename()
-    if not file_path:
-        return
     # Read the LibreOffice Calc sheet
-    df = pd.read_excel(FILE_PATH, engine="odf")
+    df = pd.read_excel(maintfile, engine="odf")
 
     # Clean column names (strips whitespace)
     df.columns = df.columns.str.strip()
@@ -135,5 +135,14 @@ def send_email(tasks_df):
 
 
 if __name__ == "__main__":
-    check_maintenance()
+
+    try:
+        # Read the maintenance section of the config file
+        cfg = CfgReader()
+
+        check_maintenance(cfg.get_fname())
+
+    except (FileNotFoundError, ValueError) as e:
+        print(f"Configuration error: {e}")
+        raise SystemExit(1)
 
